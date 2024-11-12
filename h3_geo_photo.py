@@ -32,7 +32,7 @@ def fade_blue_to_red(value):
     hex_color = f"#{red:02X}00{blue:02X}"
     return hex_color
 
-def visualize_hexagons(hexagons: Dict[str, int], folium_map=None):
+def visualize_hexagons(hexagons: Dict[str, int], folium_map=None, color=None):
     """
     hexagons is a list of hexcluster. Each hexcluster is a list of hexagons. 
     eg. [[hex1, hex2], [hex3, hex4]]
@@ -49,7 +49,7 @@ def visualize_hexagons(hexagons: Dict[str, int], folium_map=None):
         #polyline = [outline + [outline[0]] for outline in outlines][0]
         lat.extend(map(lambda v:v[0],polyline))
         lng.extend(map(lambda v:v[1],polyline))
-        polylines.append([polyline, fade_blue_to_red(float(value)/float(max_value))])
+        polylines.append([polyline, color if color else fade_blue_to_red(float(value)/float(max_value))])
     
     if folium_map is None:
         m = folium.Map(location=[sum(lat)/len(lat), sum(lng)/len(lng)], zoom_start=13, tiles='cartodbpositron')
@@ -57,7 +57,7 @@ def visualize_hexagons(hexagons: Dict[str, int], folium_map=None):
         m = folium_map
 
     for polyline, color in polylines:
-        my_PolyLine=folium.Polygon(locations=polyline,weight=1  ,color=color, fill_color=color, fill_opacity=0.2) 
+        my_PolyLine=folium.Polygon(locations=polyline, weight=0.1, color=color, fill_color=color, fill_opacity=0.6) 
         m.add_child(my_PolyLine)
 
     return m
@@ -85,16 +85,16 @@ def load_points():
         lines = f.readlines()
         for line in lines[1:]:
             lat, lon = [float(x) for x in line.strip().split(",")]
-            h3_address = h3.latlng_to_cell(lat, lon, 7)
+            h3_address = h3.latlng_to_cell(lat, lon, 9)
             hex_counts[h3_address] = 1
 
     new_hex_counts = hex_counts.copy()
     for h3_address in hex_counts.keys():
         h3_address_center = h3.cell_to_latlng(h3_address)
-        for hex in h3.grid_disk(h3_address, 10):
+        for hex in h3.grid_disk(h3_address, 50):
             hex_center = h3.cell_to_latlng(hex)
             distance = h3.great_circle_distance(hex_center, h3_address_center)
-            new_hex_counts[hex] += 1.0/(distance + 1)
+            new_hex_counts[hex] += pow(1.0/(distance + 1), 2)
 
 
     hex_counts = new_hex_counts
@@ -108,6 +108,11 @@ def load_points():
 
 
     m = visualize_hexagons(in_boulder_hexes, folium_map=None)
+
+    smallest_hex = min(in_boulder_hexes, key=in_boulder_hexes.get)
+    print(h3.cell_to_latlng(smallest_hex))
+    #largest_hex = max(in_boulder_hexes, key=in_boulder_hexes.get)
+    m = visualize_hexagons({smallest_hex: 1}, folium_map=m, color="green")
     html_string = m.get_root().render()
     with open("ring_dx.html", "w") as f:
         f.write(html_string)
