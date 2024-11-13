@@ -1,4 +1,5 @@
 from collections import defaultdict
+from email.policy import default
 from typing import Dict, List
 import h3.api.basic_str as h3
 import folium
@@ -51,7 +52,7 @@ def visualize_hexagons(hexagons: Dict[str, int], folium_map=None, color=None):
         #polyline = [outline + [outline[0]] for outline in outlines][0]
         lat.extend(map(lambda v:v[0],polyline))
         lng.extend(map(lambda v:v[1],polyline))
-        polylines.append([polyline, color if color else fade_blue_to_red(float(value)/float(max_value)), float(value)/float(max_value)])
+        polylines.append([polyline, color if color else fade_blue_to_red(float(value)/float(max_value)), float(value)/float(max_value) * 0.1])
 
     if folium_map is None:
         m = folium.Map(location=[sum(lat)/len(lat), sum(lng)/len(lng)], zoom_start=13, tiles='cartodbpositron')
@@ -59,7 +60,7 @@ def visualize_hexagons(hexagons: Dict[str, int], folium_map=None, color=None):
         m = folium_map
 
     for polyline, color, opacity in polylines:
-        my_PolyLine=folium.Polygon(locations=polyline, weight=0, color=color, fill_color=color, fill_opacity=opacity)
+        my_PolyLine=folium.Polygon(locations=polyline, stroke=False, fill_color=color, fill_opacity=opacity)
         m.add_child(my_PolyLine)
 
     return m
@@ -75,37 +76,45 @@ def visualize_polygon(polyline, color):
     m.add_child(my_PolyLine)
     return m
 
+
 def load_points():
     gdf = gpd.read_file("shapefiles/tl_2024_us_county.shp")
     boulder_county = gdf[gdf['NAME'] == 'Boulder']
     assert len(boulder_county) == 1
     boulder_boundary = boulder_county.geometry.iloc[0]
 
-    hex_counts: Dict[str, float] = defaultdict(float)
+    location_list: Dict[str, list] = defaultdict(list)
 
     with open("data/photos_latlong.csv", "r") as f:
         lines = f.readlines()
         for line in tqdm(lines[1:]):
             lat, lon = [float(x) for x in line.strip().split(",")]
-            h3_address = h3.latlng_to_cell(lat, lon, 9)
-            hex_counts[h3_address] = 1
+            child = (lat, lon)
+            h3_address = h3.latlng_to_cell(lat, lon, 11)
+            for _ in range(8):
+                location_list[h3_address].append(child)
+                child = h3_address
+                h3_address = h3.cell_to_parent(h3_address)
 
-    new_hex_counts = hex_counts.copy()
+    m = visualize_hexagons({k: 1 for k, v in location_list.items()}, folium_map=None)
+    """
 
-    for h3_address in tqdm(hex_counts.keys()):
+    new_hex_counts = location_tree.copy()
+
+    for h3_address in tqdm(location_tree.keys()):
         h3_address_center = h3.cell_to_latlng(h3_address)
-        for hex in h3.grid_disk(h3_address, 50):
+        for hex in h3.grid_disk(h3_address, 10):
             hex_center = h3.cell_to_latlng(hex)
             new_hex_counts[hex] += 0
 
 
-    hex_counts = new_hex_counts
+    location_tree = new_hex_counts
     in_boulder_hexes = {}
-    for h3_address in tqdm(hex_counts.keys()):
+    for h3_address in tqdm(location_tree.keys()):
         polyline = h3.cells_to_geo([h3_address])['coordinates'][0]
         hex_boundary = Polygon(polyline)
         if boulder_boundary.contains(hex_boundary.centroid):
-            in_boulder_hexes[h3_address] = hex_counts[h3_address]
+            in_boulder_hexes[h3_address] = location_tree[h3_address]
 
     in_boulder_locs = [h3.cell_to_latlng(hex) for hex in in_boulder_hexes if in_boulder_hexes[hex] > 0]
 
@@ -125,6 +134,7 @@ def load_points():
     print(h3.cell_to_latlng(smallest_hex))
     largest_hex = max(in_boulder_hexes, key=in_boulder_hexes.get)
     m = visualize_hexagons({smallest_hex: 1, largest_hex: 1}, folium_map=m, color="green")
+    """
     html_string = m.get_root().render()
     with open("ring_dx.html", "w") as f:
         f.write(html_string)
