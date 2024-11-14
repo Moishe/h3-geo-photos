@@ -52,7 +52,7 @@ def visualize_hexagons(hexagons: Dict[str, int], folium_map=None, color=None):
         #polyline = [outline + [outline[0]] for outline in outlines][0]
         lat.extend(map(lambda v:v[0],polyline))
         lng.extend(map(lambda v:v[1],polyline))
-        polylines.append([polyline, color if color else fade_blue_to_red(float(value)/float(max_value)), float(value)/float(max_value) * 0.1])
+        polylines.append([polyline, color if color else fade_blue_to_red(float(value)/float(max_value)), 0.2]) #float(value)/float(max_value) * 0.5 + 0.5])
 
     if folium_map is None:
         m = folium.Map(location=[sum(lat)/len(lat), sum(lng)/len(lng)], zoom_start=13, tiles='cartodbpositron')
@@ -84,19 +84,26 @@ def load_points():
     boulder_boundary = boulder_county.geometry.iloc[0]
 
     location_list: Dict[str, list] = defaultdict(list)
+    location_list_by_resolution = defaultdict(lambda: defaultdict(list))
 
     with open("data/photos_latlong.csv", "r") as f:
         lines = f.readlines()
         for line in tqdm(lines[1:]):
             lat, lon = [float(x) for x in line.strip().split(",")]
+            if lat == -180.0 and lon == -180.0:
+                continue
             child = (lat, lon)
             h3_address = h3.latlng_to_cell(lat, lon, 11)
-            for _ in range(8):
+            for resolution in range(11):
                 location_list[h3_address].append(child)
+                location_list_by_resolution[resolution][h3_address].append(child)
                 child = h3_address
                 h3_address = h3.cell_to_parent(h3_address)
 
-    m = visualize_hexagons({k: 1 for k, v in location_list.items()}, folium_map=None)
+    m = None
+    for resolution in range(5):
+        m = visualize_hexagons({k: 1 for k, v in location_list_by_resolution[resolution].items()}, color="green", folium_map=m)
+    #m = visualize_hexagons({k: len(v) for k, v in location_list.items()}, folium_map=None)
     """
 
     new_hex_counts = location_tree.copy()
