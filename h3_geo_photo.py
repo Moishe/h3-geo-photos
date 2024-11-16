@@ -1,5 +1,6 @@
 from collections import defaultdict
 from email.policy import default
+import json
 from typing import Dict, List
 import h3.api.basic_str as h3
 import folium
@@ -8,6 +9,9 @@ from shapely.geometry import Polygon, Point
 import math
 
 from tqdm import tqdm
+
+CENTER = (40.05008, -105.24760)
+RADIUS_SIZE_KM = 15
 
 def fade_blue_to_red(value):
     """
@@ -44,6 +48,11 @@ def visualize_hexagons(hexagons: Dict[str, int], folium_map=None, color=None):
     lat = []
     lng = []
     max_value = max(hexagons.values())
+
+    sorted_values = sorted(hexagons.values())
+    index_to_sorted_value = enumerate(sorted_values)
+    value_to_index = {value: index for index, value in index_to_sorted_value}
+
     for hex, value in hexagons.items():
         polyline = h3.cells_to_geo([hex])['coordinates'][0]
         polyline = [[p[1], p[0]] for p in polyline]
@@ -52,15 +61,17 @@ def visualize_hexagons(hexagons: Dict[str, int], folium_map=None, color=None):
         #polyline = [outline + [outline[0]] for outline in outlines][0]
         lat.extend(map(lambda v:v[0],polyline))
         lng.extend(map(lambda v:v[1],polyline))
-        polylines.append([polyline, color if color else fade_blue_to_red(float(value)/float(max_value)), 0.2]) #float(value)/float(max_value) * 0.5 + 0.5])
+        f = float(value_to_index[value]) / float(len(hexagons))
+        f = float(value) / float(max_value)
+        polylines.append([polyline, color if color else fade_blue_to_red(f), 0.5])
 
     if folium_map is None:
-        m = folium.Map(location=[sum(lat)/len(lat), sum(lng)/len(lng)], zoom_start=13, tiles='cartodbpositron')
+        m = folium.Map(location=CENTER, zoom_start=13, tiles='cartodbpositron')
     else:
         m = folium_map
 
     for polyline, color, opacity in polylines:
-        my_PolyLine=folium.Polygon(locations=polyline, stroke=False, fill_color=color, fill_opacity=opacity)
+        my_PolyLine=folium.Polygon(locations=polyline, stroke=True, weight=0.2, fill_color=color, fill_opacity=opacity)
         m.add_child(my_PolyLine)
 
     return m
@@ -75,6 +86,44 @@ def visualize_polygon(polyline, color):
     my_PolyLine=folium.Polygon(locations=polyline,weight=8,color=color, fill_color=color, fill_opacity=0.2)
     m.add_child(my_PolyLine)
     return m
+
+def create_map(idx, parent, location_list, boundary):
+    all_cells = set()
+    set_cells = set()
+
+    first_child = list(location_list.keys())[0]
+    child_resolution = h3.get_resolution(first_child)
+    children = h3.cell_to_children(parent, child_resolution)
+    for hex in tqdm(children):
+        hex_center = h3.cell_to_latlng(hex)
+        if hex in location_list:
+            set_cells.add(hex)
+        dx = h3.great_circle_distance(hex_center, CENTER, unit="km")
+        if dx > RADIUS_SIZE_KM:
+            continue
+        polyline = h3.cells_to_geo([hex])['coordinates'][0]
+        hex_boundary = Polygon(polyline)
+        if not boundary.contains(hex_boundary.centroid):
+            continue
+        all_cells.add(hex)
+
+    centers = [h3.cell_to_latlng(hex) for hex in location_list.keys()]
+    min_distances = {}
+    for hex in tqdm(all_cells):
+        hex_center = h3.cell_to_latlng(hex)
+        min_distance = min([h3.great_circle_distance(hex_center, other_hex) for other_hex in centers])
+        min_distances[hex] = min_distance
+
+    max_min = max(min_distances.values())
+    for hex in min_distances:
+        min_distances[hex] = pow(1.0 - min_distances[hex] / max_min, 0.5)
+
+    print(f"plotting {len(min_distances)} hexagons")
+    m = visualize_hexagons(min_distances, folium_map=None)
+    html_string = m.get_root().render()
+    with open(f"webview/map{idx}.html", "w") as f:
+        f.write(html_string)
+
 
 
 def load_points():
@@ -101,10 +150,11 @@ def load_points():
                 h3_address = h3.cell_to_parent(h3_address)
 
     m = None
-    for resolution in range(5):
-        m = visualize_hexagons({k: 1 for k, v in location_list_by_resolution[resolution].items()}, color="green", folium_map=m)
-    #m = visualize_hexagons({k: len(v) for k, v in location_list.items()}, folium_map=None)
+    parent = h3.latlng_to_cell(CENTER[0], CENTER[1], 2)
+    create_map(0, parent, location_list_by_resolution[1], boulder_boundary)
     """
+    for idx, resolution in enumerate(range(4, 10)):
+        create_map(idx, resolution, location_list_by_resolution[resolution])
 
     new_hex_counts = location_tree.copy()
 
@@ -142,9 +192,6 @@ def load_points():
     largest_hex = max(in_boulder_hexes, key=in_boulder_hexes.get)
     m = visualize_hexagons({smallest_hex: 1, largest_hex: 1}, folium_map=m, color="green")
     """
-    html_string = m.get_root().render()
-    with open("ring_dx.html", "w") as f:
-        f.write(html_string)
 
 if __name__ == "__main__":
     load_points()
